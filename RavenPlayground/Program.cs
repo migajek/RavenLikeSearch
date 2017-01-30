@@ -1,14 +1,11 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
-using Raven.Abstractions.Data;
-using Raven.Abstractions.Util;
+using Raven.Abstractions.Extensions;
 using Raven.Client;
 using Raven.Client.Document;
-using Raven.Client.Embedded;
 using Raven.Client.Linq;
+using Raven.Imports.Newtonsoft.Json;
 
 namespace RavenPlayground
 {
@@ -22,128 +19,154 @@ namespace RavenPlayground
     
     class Program
     {
-        
+        private const int MaxDocuments = 1000;
+        private const string DumpFileName = "dump.json";
+        private static readonly string[] Help = {
+            "q to quit",
+            $"i to import data from dumpfile ({DumpFileName})",
+            "c to create broken index",
+            "r to remove broken index",
+            $"e to export data to dumpfile ({DumpFileName})",            
+        };
+
         static void Main(string[] args)
-        {                        
-            var sourceStore = new DocumentStore
+        {
+            new[]
             {
-                Url = "http://localhost:8080/",
-                DefaultDatabase = "Tenant-10",
-                Conventions =
+                "When running for the first time, please do the following:",
+                "1. run import (i)",
+                "2. ensure you've got 5 items found in both cases (if not, press enter to re-run query - the eventual consistency...)",
+                "3. create broken index (c)",
+                "4. the query ravendb-side should should return no results (invalid behavior!)",
+                "5. remove broken index (r)",
+                "6. the query should behave properly again",
+                "---------",""
+            }.ForEach(Console.WriteLine);
+
+            var store = InitializeStore();
+
+            string cmd = "";
+            while (cmd != "q")
+            {
+                Help.ForEach(Console.WriteLine);
+                Console.WriteLine("");
+                switch (cmd)
                 {
-                    FindTypeTagName = type =>
-                    {
-                        if (type == typeof (Entity))
-                            return
-                                DocumentConvention.DefaultTransformTypeTagNameToDocumentKeyPrefix(
-                                    "Abax_Worker_Services_Documents_Projections_Article_Model_Article");
-                        return DocumentConvention.DefaultTypeTagName(type);
-                    }
-                },
-            };
-            sourceStore.Initialize();
+                    case "c":
+                        CreateInvalidIndex(store);
+                        break;
 
-            var outputStore = new DocumentStore
+                    case "r":
+                        RemoveInvalidIndex(store);
+                        break;
+
+                    case "e":
+                        ExportDataToFile(store);
+                        break;
+
+                    case "l":
+                        ImportDataFromFile(store);
+                        break;
+                }
+
+                RunQuery(store);
+
+                Console.WriteLine("");
+                cmd = Console.ReadLine();
+                Console.WriteLine("");
+            }
+        }
+
+        private static void ImportDataFromFile(IDocumentStore store)
+        {
+            if (!File.Exists(DumpFileName))
+            {
+                Console.WriteLine($"Dump file {DumpFileName} does not exist");
+                return;
+            }
+            var entities = JsonConvert.DeserializeObject<Entity[]>(File.ReadAllText(DumpFileName));
+            Console.WriteLine($"Bulk insert {entities.Length} entitites");
+            using (var sess = store.BulkInsert())
+            {
+                entities.ForEach(x => sess.Store(x));
+            }
+            Console.WriteLine($"Bulk insert done");
+        }
+
+        private static IDocumentStore InitializeStore()
+        {
+            const string databaseName = "demo-db2";
+            var store = new DocumentStore
             {
                 Url = "http://localhost:8080/",
-                DefaultDatabase = "demo-db",               
+                DefaultDatabase = databaseName,
             };
-            outputStore.Initialize();
-            outputStore.DatabaseCommands.GlobalAdmin.EnsureDatabaseExists("demo-db");
+            store.Initialize();
+            store.DatabaseCommands.GlobalAdmin.EnsureDatabaseExists(databaseName);
+            return store;
+        }
 
-
-            //using (var sess = sourceStore.OpenSession())
-            //{
-            //    var arts = sess.Query<Entity>().Take(1000).ToList();
-            //    arts.ForEach(art =>
-            //    {
-            //        using (var sess2 = outputStore.OpenSession())
-            //        {
-            //            sess2.Store(art);                        
-            //            sess2.SaveChanges();
-            //        }
-            //    });
-            //}
-            //Console.WriteLine("Pumping done");
-
-            Console.WriteLine("SOURCE: ");
-            using (var sess = sourceStore.OpenSession())
+        private static void RunQuery(IDocumentStore store)
+        {
+            Console.WriteLine("\nRunning query: ");
+            using (var sess = store.OpenSession())
             {
                 var whereServerSide = sess.Query<Entity>()
                     .Where(x => x.Id.In(420, 406, 262, 263, 264))
-                    .Take(1000)
-                    .ToList();                    
-
-
-                Console.WriteLine($"Got {whereServerSide.Count} items - ravendb");
-
-                var whereInMemory = sess.Query<Entity>()
-                    .Take(1000)
-                    .ToList()
-                    .Where(x => x.Id.In(420, 406, 262, 263, 264))
-                    .ToList();
-                Console.WriteLine($"Got {whereInMemory.Count} items - in memory");
-            }
-
-            Console.WriteLine("\n\nDEST: !!!");
-            using (var sess = outputStore.OpenSession())
-            {
-                var whereServerSide = sess.Query<Entity>()
-                    .Where(x => x.Id.In(420, 406, 262, 263, 264))
-                    .Take(1000)
+                    .Take(MaxDocuments)
                     .ToList();
 
 
                 Console.WriteLine($"Got {whereServerSide.Count} items - ravendb");
 
                 var whereInMemory = sess.Query<Entity>()
-                    .Take(1000)
+                    .Take(MaxDocuments)
                     .ToList()
                     .Where(x => x.Id.In(420, 406, 262, 263, 264))
                     .ToList();
                 Console.WriteLine($"Got {whereInMemory.Count} items - in memory");
             }
+        }        
 
+        private static void ExportDataToFile(IDocumentStore store)
+        {
+            Console.WriteLine("Dumping data");
+            using (var sess = store.OpenSession())
+            {
+                var entities = sess.Query<Entity>().Take(MaxDocuments).ToList();
+                if (!entities.Any())
+                {
+                    Console.WriteLine("No entities, skipping.");
+                    return;
+                }
+                File.WriteAllText(DumpFileName, JsonConvert.SerializeObject(entities));
+                Console.WriteLine($"Data dumped to {DumpFileName}");
+            }
+        }
 
-            //using (var sess = store.OpenSession())
-            //{
-            //    if (sess.Query<Entity>().Count() < 1000)
-            //        Enumerable.Range(1, 1024)
-            //            .Select(x => new Entity()
-            //            {
-            //                ArticleTemplateId = x < 850 ? x + 200 : (long?) null,
-            //                Id = x+10,
-            //                Name = $"Article #{x}"
-            //            })
-            //            .ToList()
-            //            .ForEach(x => sess.Store(x));
-            //    sess.SaveChanges();
-            //}
+        private static void RemoveInvalidIndex(IDocumentStore store)
+        {
+            Console.WriteLine("Listing indexes");
+            var indexes =
+                store.DatabaseCommands.GetIndexNames(0, 1024).Where(x => x.ToLower().Contains("foo")).ToArray();
+            Console.WriteLine($"Found {indexes.Length} matching, removing them");
+            indexes.ForEach(x => Console.WriteLine($"\t{x}"));
+            indexes.ForEach(x => store.DatabaseCommands.DeleteIndex(x));
+            Console.WriteLine("Removing done");
+        }
 
-            //using (var sess = store.OpenSession())
-            //{
-            //    sess.Advanced.MaxNumberOfRequestsPerSession = 1000;
-            //    //var ar = sess.Query<Entity>().Where(x => x.Id.In(262, 263, 264)).ToArray();
-            //    var chunks = Enumerable.Range(1, 1024)
-            //        .Select(x => x + 10)
-            //        .Select((x, i) => new {Index = i, Value = (long)x})
-            //        .GroupBy(x => x.Index/3)
-            //        .Select(x => x.Select(v => v.Value).ToList());
-
-            //    foreach (var chunk in chunks)
-            //    {
-            //        var ar = sess.Query<Entity>().Where(x => x.Id.In(chunk)).ToArray();
-            //        var missings = chunk.Where(idx => ar.All(ent => ent.Id != idx));
-            //        foreach (var missing in missings)
-            //        {
-            //            Console.WriteLine($"Missing #{missing}");
-            //        }                    
-            //    }
-            //    Console.WriteLine("Done");
-
-            //}
-
-            Console.ReadLine();
+        private static void CreateInvalidIndex(IDocumentStore store)
+        {
+            Console.WriteLine("Querying for FooField over Entity");
+            using (var sess = store.OpenSession())
+            {
+                sess.Advanced
+                    .DocumentQuery<Entity>()
+                    .WhereEquals("FooField", "5")
+                    .ToList();
+                sess.SaveChanges();
+            }
+            Console.WriteLine("Querying done");
         }
     }
 }
