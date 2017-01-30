@@ -9,24 +9,19 @@ using Raven.Imports.Newtonsoft.Json;
 
 namespace RavenPlayground
 {
-    public class Entity
-    {
-        public long Id { get; set; }
-        public string Name { get; set; }
-        public long? ArticleTemplateId { get; set; }        
-    }
-
-    
     class Program
     {
+        private const string RavenDbUrl = "http://localhost:8080/";
         private const int MaxDocuments = 1000;
-        private const string DumpFileName = "dump.json";
+        private const string DumpFileName = "dump.json";        
+
         private static readonly string[] Help = {
             "q to quit",
             $"i to import data from dumpfile ({DumpFileName})",
             "c to create broken index",
-            "r to remove broken index",
-            $"e to export data to dumpfile ({DumpFileName})",            
+            "t to create typed index",
+            "r to remove indexes",            
+            $"e to export data to dumpfile ({DumpFileName})"            
         };
 
         static void Main(string[] args)
@@ -56,6 +51,10 @@ namespace RavenPlayground
                         CreateInvalidIndex(store);
                         break;
 
+                    case "t":
+                        CreateInvalidTypedIndex(store);
+                        break;
+
                     case "r":
                         RemoveInvalidIndex(store);
                         break;
@@ -64,7 +63,7 @@ namespace RavenPlayground
                         ExportDataToFile(store);
                         break;
 
-                    case "l":
+                    case "i":
                         ImportDataFromFile(store);
                         break;
                 }
@@ -75,6 +74,12 @@ namespace RavenPlayground
                 cmd = Console.ReadLine();
                 Console.WriteLine("");
             }
+        }
+
+        private static void CreateInvalidTypedIndex(IDocumentStore store)
+        {
+            new BrokenTypedFooIndex().Execute(store);
+            Console.WriteLine("Index executed");
         }
 
         private static void ImportDataFromFile(IDocumentStore store)
@@ -98,7 +103,7 @@ namespace RavenPlayground
             const string databaseName = "demo-db2";
             var store = new DocumentStore
             {
-                Url = "http://localhost:8080/",
+                Url = RavenDbUrl,
                 DefaultDatabase = databaseName,
             };
             store.Initialize();
